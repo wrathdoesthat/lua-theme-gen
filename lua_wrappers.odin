@@ -10,7 +10,7 @@ str_f_t :: proc(s: ^lua.State, name: cstring, allocator := context.allocator) ->
 	lua.getfield(s, -1, name)
 
 	if lua.isnil(s, -1) {
-		log.log(.Error, name, "was not found in table or is nil")
+		log.log(.Info, name, "was not found in table or is nil")
 		lua.pop(s, 1)
 		return "", false
 	}

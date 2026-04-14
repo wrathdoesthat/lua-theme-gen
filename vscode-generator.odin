@@ -268,6 +268,14 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 			os.exit(1)
 		}
 
+		if !os.exists("./output") {
+			make_err := os.make_directory("./output")
+			if make_err != nil {
+				log.log(.Fatal, "Error creating output directory", make_err)
+				os.exit(1)
+			}
+		}
+
 		out_path := strings.concatenate({strings.clone_from(args.output_path), "/theme.json"})
 		out_file, open_err := os.open(out_path, {.Create})
 		if open_err != nil {
@@ -285,6 +293,4 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 
 		free_all(context.temp_allocator)
 	}
-
-	destroy_vscode_theme(theme)
 }
