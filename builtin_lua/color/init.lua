@@ -120,7 +120,6 @@ M.rgb_string_to_hsl = rgb_string_to_hsl
 --                       with "#" (suitable for inclusion in HTML)
 -----------------------------------------------------------------------------
 function Color:to_rgb()
-   local r, g, b = hsl_to_rgb(self.H, self.S, self.L)
    local rgb = {hsl_to_rgb(self.H, self.S, self.L)}
    local buffer = "#"
    for i,v in ipairs(rgb) do

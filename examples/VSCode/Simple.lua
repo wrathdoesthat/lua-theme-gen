@@ -1,5 +1,6 @@
 local color = require("color")
 
+
 return {
     name = "test_theme",
     type = "dark",

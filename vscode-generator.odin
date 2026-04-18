@@ -80,6 +80,8 @@ create_vscode_theme :: proc() -> ^VSCode_Theme {
 	return theme
 }
 
+
+
 destroy_vscode_theme :: proc(t: ^VSCode_Theme) {
 	vmem.arena_destroy(t.arena)
 	free(t.arena)
@@ -184,8 +186,7 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 							tok.scopes = scopes[:]
 						};
 						case: {
-							log.log(.Fatal, "Unknown scope type")
-							os.exit(1)
+							log.panic("Unknown scope type:", scope_type)
 						}
 					}
 
@@ -262,34 +263,25 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 		}
 		out["semanticTokenColors"] = colors
 
-		data, err := json.marshal(out, {pretty = true})
-		if err != nil {
-			log.log(.Fatal, "Failed marshalling theme", err)
-			os.exit(1)
+		data, marshal_err := json.marshal(out, {pretty = true, sort_maps_by_key = true})
+		if marshal_err != nil {
+			log.fatal("Failed marshalling theme", marshal_err)
 		}
 
-		if !os.exists("./output") {
+		if !os.exists(args.output_path) {
 			make_err := os.make_directory("./output")
 			if make_err != nil {
-				log.log(.Fatal, "Error creating output directory", make_err)
-				os.exit(1)
+				log.fatal("Error creating output directory", make_err)
 			}
 		}
 
-		out_path := strings.concatenate({strings.clone_from(args.output_path), "/theme.json"})
-		out_file, open_err := os.open(out_path, {.Create})
-		if open_err != nil {
-			log.log(.Fatal, "Error opening theme file", open_err)
-			os.exit(1)
-		}
-
-		_, write_err := os.write(out_file, data)
+		out_path, _ := os.join_path({string(args.output_path), "theme.json"}, context.allocator)
+		write_err := os.write_entire_file(out_path, data)
 		if write_err != nil {
-			log.log(.Fatal, "Error writing to theme file", write_err)
-			os.exit(1)
+			log.panic("Failed to write theme to", out_path, "error:", write_err)
 		}
 
-		log.log(.Info, "Successfully wrote theme to", out_path)
+		log.info("Successfully wrote theme to", out_path)
 
 		free_all(context.temp_allocator)
 	}
