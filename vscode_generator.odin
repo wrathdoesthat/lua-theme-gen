@@ -1,6 +1,5 @@
-package luatest
+package main
 
-import "core:fmt"
 import lua "vendor:lua/5.4"
 import "core:os"
 import "core:encoding/json"
@@ -69,8 +68,7 @@ create_vscode_theme :: proc() -> ^VSCode_Theme {
 	theme.arena = new(vmem.Arena)
 	init_err := vmem.arena_init_growing(theme.arena)
 	if init_err != nil {
-		log.log(.Fatal, "Error initializing virtual arena", init_err)
-		os.exit(1)
+		log.panic( "Error initializing virtual arena", init_err)
 	}
 
 	theme.allocator = vmem.arena_allocator(theme.arena)
@@ -79,8 +77,6 @@ create_vscode_theme :: proc() -> ^VSCode_Theme {
 	theme.semanticTokenColors = make(map[string]string, theme.allocator)
 	return theme
 }
-
-
 
 destroy_vscode_theme :: proc(t: ^VSCode_Theme) {
 	vmem.arena_destroy(t.arena)
@@ -96,8 +92,7 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 	{	
 		context.allocator = theme.allocator
 		if !lua.istable(state, -1) {
-			log.log(.Fatal, "Value return from file is not a table")
-			os.exit(1)
+			log.panic("Value return from file is not a table")
 		}
 
 		if name, ok := str_f_t(state, "name"); ok {
@@ -155,8 +150,7 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 
 			for lua.next(state, -2) != 0 {
 				if !lua.istable(state, -1) {
-					log.log(.Fatal, "Item in tokenColors is not a table")
-					os.exit(1)
+					log.fatal("Item in tokenColors is not a table")
 				}
 
 				tok := Token_Color{
@@ -265,17 +259,17 @@ generate_vscode_theme :: proc(args: CLI_Args, state: ^lua.State) {
 
 		data, marshal_err := json.marshal(out, {pretty = true, sort_maps_by_key = true})
 		if marshal_err != nil {
-			log.fatal("Failed marshalling theme", marshal_err)
+			log.panic("Failed marshalling theme", marshal_err)
 		}
 
 		if !os.exists(args.output_path) {
 			make_err := os.make_directory("./output")
 			if make_err != nil {
-				log.fatal("Error creating output directory", make_err)
+				log.panic("Error creating output directory", make_err)
 			}
 		}
 
-		out_path, _ := os.join_path({string(args.output_path), "theme.json"}, context.allocator)
+		out_path, _ := os.join_path({args.output_path, "theme.json"}, context.allocator)
 		write_err := os.write_entire_file(out_path, data)
 		if write_err != nil {
 			log.panic("Failed to write theme to", out_path, "error:", write_err)

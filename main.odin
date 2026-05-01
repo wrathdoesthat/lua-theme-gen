@@ -1,5 +1,5 @@
 #+feature dynamic-literals
-package luatest
+package main
 
 import lua "vendor:lua/5.4"
 import "core:flags"
@@ -9,6 +9,10 @@ import "base:runtime"
 import "core:mem"
 import "core:log"
 import "core:time"
+import "core:thread"
+import "core:slice"
+import "core:sys/windows"
+import "core:sync/chan"
 
 CLI_Args :: struct {
 	path: string `args:"pos=0,required" usage:"Path to lua used to generate theme"`,
@@ -41,16 +45,20 @@ generate_theme :: proc(args: CLI_Args) {
 	cstr_path := strings.clone_to_cstring(args.path)
 	if lua.L_dofile(lua_state, cstr_path) != 0 {
 		err := lua.tostring(lua_state, -1)
-		log.info("Error running lua file, continuing file watch.", err)
-	}
-	delete(cstr_path)
+		log.error("Error running lua file:", err)
 
-	switch args.generator {
-		case .VSCode: {
-			generate_vscode_theme(args, lua_state)
+		if args.live {
+			log.info("Continuing watch.")
+		}
+	} else {
+		switch args.generator {
+			case .VSCode: {
+				generate_vscode_theme(args, lua_state)
+			}
 		}
 	}
 
+	delete(cstr_path)
 	lua.close(lua_state)
 }
 
@@ -75,14 +83,10 @@ cleanup_logging :: proc(logger: Logger) {
 	os.close(logger.log_file)
 }
 
-included_base_libs: map[string]Open_Proc = {
+included_base_libs := map[string]Open_Proc {
 		"_G" = lua.open_base,
 		"package" = lua.open_package,
-//		"coroutine" = lua.open_coroutine,
-//		"debug" = lua.open_debug,
-//		"io" = lua.open_io,
 		"math" = lua.open_math,
-//		"os" = lua.open_os,
 		"string" = lua.open_string,
 		"table" = lua.open_table,
 		"utf8" = lua.open_utf8,
@@ -115,6 +119,7 @@ setup_lua_state :: proc(args: CLI_Args) -> ^lua.State {
 		free_all(context.temp_allocator)
 	}
 
+	// Other globals
 	{
 		context.allocator = context.temp_allocator
 		lua.pushstring(s, strings.clone_to_cstring(Generator_Strings[args.generator]))
@@ -154,7 +159,6 @@ main :: proc() {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, context.allocator)
 	context.allocator = mem.tracking_allocator(&track)
-
 	defer {
 		if len(track.allocation_map) > 0 {
 			log.error("Leaked", len(track.allocation_map), "allocations")
@@ -164,6 +168,11 @@ main :: proc() {
 		}
 		mem.tracking_allocator_destroy(&track)
 	}
+
+	when ODIN_OS == .Windows {
+		windows.SetConsoleOutputCP(.UTF8)
+		windows.SetConsoleCP(.UTF8)
+	}
 	
 	logger := setup_logging(.Debug)
 	context.logger = logger.multi_logger
@@ -172,33 +181,62 @@ main :: proc() {
 	args := parse_cli_args()
 	defer cleanup_cli_args(args)
 
-	exit_live := false
-	our_last_modify := time.now()
-
-	{
-		if args.live {
-			file_handle, file_err := os.open(args.path)
-			if file_err != nil {
-				log.panic("Failed to open theme file handle:", file_err)
-			}
-
-			for !exit_live {
-				now := time.now()
-				
-				modification_time, mod_err := os.modification_time_by_path(args.path)
-				if mod_err != nil {
-					log.panic("Failed to get modification time:", mod_err)
-				}
-
-				if modification_time != our_last_modify {
-					generate_theme(args)
-					our_last_modify = modification_time
-				}
-
-				time.sleep(500 * time.Millisecond)
-			}
-		} else {
-			generate_theme(args)
+	if args.live {
+		command_channel, chan_err := chan.create(chan.Chan(^Command), 5, context.allocator)
+		if chan_err != nil {
+			log.panic("Failed to create command channel:", chan_err)
 		}
-	}
+		
+		thread_data := Thread_Data{
+			args = args,
+			send_chan = chan.as_send(command_channel),
+		}
+
+		input_thread := thread.create_and_start_with_poly_data(thread_data, input_thread_proc, context)
+
+		recv_chan := chan.as_recv(command_channel)
+
+		our_last_modify := time.now()
+		if os.exists(args.path) {
+			mod_err: os.Error
+			our_last_modify, mod_err = os.modification_time_by_path(args.path)
+			if mod_err != nil {
+				log.panic("Failed to get initial modification time:", mod_err)
+			}
+		}
+
+		in_live := true
+		for in_live {
+			for {
+				if cmd, ok := chan.try_recv(recv_chan); ok {
+					switch type in cmd {
+						case Exit: {
+							in_live = false
+						}
+					}
+
+					destroy_command(cmd)
+				} else {
+					break
+				}
+			}
+			
+			modification_time, mod_err := os.modification_time_by_path(args.path)
+			if mod_err != nil {
+				log.panic("Failed to get modification time:", mod_err)
+			}
+
+			if modification_time != our_last_modify {
+				generate_theme(args)
+				our_last_modify = modification_time
+			}
+
+			time.sleep(25 * time.Millisecond)
+		}
+
+		thread.destroy(input_thread)
+		chan.destroy(command_channel)
+	} else {
+		generate_theme(args)
+	}	
 }
